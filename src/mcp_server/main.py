@@ -487,6 +487,7 @@ async def notion_create_page(
     parent_id: str,
     title: str,
     content: str = "",
+    title_property: str = "Name",
 ) -> str:
     """Notion에 새 페이지를 생성합니다.
 
@@ -495,10 +496,11 @@ async def notion_create_page(
         parent_id: 부모 데이터베이스 또는 페이지 ID
         title: 페이지 제목
         content: 페이지 본문 내용 (일반 텍스트)
+        title_property: 데이터베이스의 제목 속성 이름 (기본값 "Name", notion_get_database로 확인 가능)
     """
     if parent_type == "database":
         parent = {"database_id": parent_id}
-        properties = {"Name": {"title": [{"text": {"content": title}}]}}
+        properties = {title_property: {"title": [{"text": {"content": title}}]}}
     else:
         parent = {"page_id": parent_id}
         properties = {"title": {"title": [{"text": {"content": title}}]}}
@@ -521,7 +523,10 @@ async def notion_update_page(page_id: str, properties: str) -> str:
         page_id: 페이지 ID
         properties: 수정할 속성 JSON 문자열 (예: '{"Status": {"status": {"name": "Done"}}}')
     """
-    props = json.loads(properties)
+    try:
+        props = json.loads(properties)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON in properties: {e}"}, ensure_ascii=False, indent=2)
     page = await notion.update_page(page_id, props)
     return json.dumps(
         {"id": page["id"], "url": page.get("url", ""), "last_edited_time": page.get("last_edited_time")},
@@ -572,8 +577,11 @@ async def notion_query_database(
         sorts: 정렬 조건 JSON 문자열 (Notion sorts 형식)
         page_size: 최대 결과 수
     """
-    filter_dict = json.loads(filter_by) if filter_by else None
-    sorts_list = json.loads(sorts) if sorts else None
+    try:
+        filter_dict = json.loads(filter_by) if filter_by else None
+        sorts_list = json.loads(sorts) if sorts else None
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON provided: {e}"}, ensure_ascii=False, indent=2)
     result = await notion.query_database(database_id, filter_dict, sorts_list, page_size)
     pages = []
     for page in result.get("results", []):
@@ -611,8 +619,10 @@ async def notion_get_page_content(page_id: str) -> str:
                 t.get("plain_text", "") for t in type_data.get("rich_text", [])
             )
         elif block_type == "image":
-            img = type_data.get(type_data.get("type", ""), {})
-            block_data["url"] = img.get("url", "")
+            image_type = type_data.get("type")
+            if image_type:
+                image_data = type_data.get(image_type, {})
+                block_data["url"] = image_data.get("url", "")
         blocks.append(block_data)
     return json.dumps(blocks, ensure_ascii=False, indent=2)
 
