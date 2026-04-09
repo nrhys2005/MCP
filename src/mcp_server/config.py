@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Linear
     linear_api_key: str = ""
 
+    # Notion
+    notion_api_key: str = ""
+
     # Server
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8000

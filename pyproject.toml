@@ -1,7 +1,7 @@
 [project]
 name = "mcp-server"
 version = "0.1.0"
-description = "MCP server for Jira, Slack, and Linear integration"
+description = "MCP server for Jira, Slack, Linear, and Notion integration"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
