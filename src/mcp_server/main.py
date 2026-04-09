@@ -503,15 +503,7 @@ async def notion_create_page(
         parent = {"page_id": parent_id}
         properties = {"title": {"title": [{"text": {"content": title}}]}}
 
-    children = []
-    if content:
-        children.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": content}}],
-            },
-        })
+    children = notion.build_paragraph_blocks(content) if content else []
 
     page = await notion.create_page(parent, properties, children or None)
     return json.dumps(
@@ -568,7 +560,7 @@ async def notion_get_database(database_id: str) -> str:
 @mcp.tool()
 async def notion_query_database(
     database_id: str,
-    filter: str | None = None,
+    filter_by: str | None = None,
     sorts: str | None = None,
     page_size: int = 10,
 ) -> str:
@@ -576,20 +568,26 @@ async def notion_query_database(
 
     Args:
         database_id: 데이터베이스 ID
-        filter: 필터 조건 JSON 문자열 (Notion filter 형식)
+        filter_by: 필터 조건 JSON 문자열 (Notion filter 형식)
         sorts: 정렬 조건 JSON 문자열 (Notion sorts 형식)
         page_size: 최대 결과 수
     """
-    filter_dict = json.loads(filter) if filter else None
+    filter_dict = json.loads(filter_by) if filter_by else None
     sorts_list = json.loads(sorts) if sorts else None
     result = await notion.query_database(database_id, filter_dict, sorts_list, page_size)
     pages = []
     for page in result.get("results", []):
         item: dict = {"id": page["id"]}
         for key, prop in page.get("properties", {}).items():
-            if prop.get("type") == "title":
+            prop_type = prop.get("type", "")
+            if prop_type == "title":
                 item["title"] = "".join(t.get("plain_text", "") for t in prop.get("title", []))
-                break
+            elif prop_type == "status":
+                item[key] = (prop.get("status") or {}).get("name", "")
+            elif prop_type == "select":
+                item[key] = (prop.get("select") or {}).get("name", "")
+            elif prop_type == "date":
+                item[key] = (prop.get("date") or {}).get("start", "")
         item["url"] = page.get("url", "")
         pages.append(item)
     return json.dumps(pages, ensure_ascii=False, indent=2)
@@ -627,15 +625,7 @@ async def notion_append_content(page_id: str, content: str) -> str:
         page_id: 페이지 ID
         content: 추가할 텍스트 내용
     """
-    children = [
-        {
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": content}}],
-            },
-        }
-    ]
+    children = notion.build_paragraph_blocks(content)
     result = await notion.append_block_children(page_id, children)
     added = result.get("results", [])
     return json.dumps(

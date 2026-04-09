@@ -4,6 +4,7 @@ from mcp_server.config import settings
 
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
+_MAX_RICH_TEXT_LENGTH = 2000
 
 
 def _headers() -> dict[str, str]:
@@ -63,12 +64,12 @@ async def get_database(database_id: str) -> dict:
 
 
 async def query_database(
-    database_id: str, filter: dict | None = None, sorts: list | None = None, page_size: int = 10,
+    database_id: str, filter_by: dict | None = None, sorts: list | None = None, page_size: int = 10,
 ) -> dict:
     """Notion 데이터베이스를 쿼리합니다."""
     body: dict = {"page_size": page_size}
-    if filter:
-        body["filter"] = filter
+    if filter_by:
+        body["filter"] = filter_by
     if sorts:
         body["sorts"] = sorts
     async with httpx.AsyncClient() as client:
@@ -101,3 +102,18 @@ async def append_block_children(block_id: str, children: list) -> dict:
         )
         resp.raise_for_status()
         return resp.json()
+
+
+def build_paragraph_blocks(text: str) -> list[dict]:
+    """긴 텍스트를 Notion API 2000자 제한에 맞춰 paragraph 블록 리스트로 변환합니다."""
+    blocks = []
+    for i in range(0, len(text), _MAX_RICH_TEXT_LENGTH):
+        chunk = text[i : i + _MAX_RICH_TEXT_LENGTH]
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": chunk}}],
+            },
+        })
+    return blocks
