@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server.config import settings
-from mcp_server.tools import jira, linear, slack
+from mcp_server.tools import jira, linear, notion, slack
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -407,6 +407,242 @@ async def linear_list_projects(limit: int = 20) -> str:
         for p in projects
     ]
     return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+# ── Notion Tools ────────────────────────────────────────────
+
+
+@mcp.tool()
+async def notion_search(query: str, filter_type: str | None = None, page_size: int = 10) -> str:
+    """Notion에서 페이지 또는 데이터베이스를 검색합니다.
+
+    Args:
+        query: 검색어
+        filter_type: 필터 타입 ("page" 또는 "database", 미지정 시 전체 검색)
+        page_size: 최대 결과 수
+    """
+    result = await notion.search(query, filter_type, page_size)
+    items = []
+    for obj in result.get("results", []):
+        item = {"id": obj["id"], "object": obj["object"]}
+        title_parts = []
+        if obj["object"] == "page":
+            for key, prop in obj.get("properties", {}).items():
+                if prop.get("type") == "title":
+                    title_parts = [t.get("plain_text", "") for t in prop.get("title", [])]
+                    break
+        elif obj["object"] == "database":
+            title_parts = [t.get("plain_text", "") for t in obj.get("title", [])]
+        item["title"] = "".join(title_parts)
+        item["url"] = obj.get("url", "")
+        items.append(item)
+    return json.dumps(items, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_get_page(page_id: str) -> str:
+    """Notion 페이지의 속성 정보를 조회합니다.
+
+    Args:
+        page_id: 페이지 ID (예: "a1b2c3d4-...")
+    """
+    page = await notion.get_page(page_id)
+    properties = {}
+    for key, prop in page.get("properties", {}).items():
+        prop_type = prop.get("type", "")
+        if prop_type == "title":
+            properties[key] = "".join(t.get("plain_text", "") for t in prop.get("title", []))
+        elif prop_type == "rich_text":
+            properties[key] = "".join(t.get("plain_text", "") for t in prop.get("rich_text", []))
+        elif prop_type == "number":
+            properties[key] = prop.get("number")
+        elif prop_type == "select":
+            properties[key] = (prop.get("select") or {}).get("name", "")
+        elif prop_type == "multi_select":
+            properties[key] = [s["name"] for s in prop.get("multi_select", [])]
+        elif prop_type == "status":
+            properties[key] = (prop.get("status") or {}).get("name", "")
+        elif prop_type == "date":
+            date = prop.get("date") or {}
+            properties[key] = date.get("start", "")
+        elif prop_type == "checkbox":
+            properties[key] = prop.get("checkbox")
+        elif prop_type == "url":
+            properties[key] = prop.get("url", "")
+        else:
+            properties[key] = f"[{prop_type}]"
+    result = {
+        "id": page["id"],
+        "url": page.get("url", ""),
+        "created_time": page.get("created_time"),
+        "last_edited_time": page.get("last_edited_time"),
+        "properties": properties,
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_create_page(
+    parent_type: str,
+    parent_id: str,
+    title: str,
+    content: str = "",
+    title_property: str = "Name",
+) -> str:
+    """Notion에 새 페이지를 생성합니다.
+
+    Args:
+        parent_type: 부모 타입 ("database" 또는 "page")
+        parent_id: 부모 데이터베이스 또는 페이지 ID
+        title: 페이지 제목
+        content: 페이지 본문 내용 (일반 텍스트)
+        title_property: 데이터베이스의 제목 속성 이름 (기본값 "Name", notion_get_database로 확인 가능)
+    """
+    if parent_type == "database":
+        parent = {"database_id": parent_id}
+        properties = {title_property: {"title": [{"text": {"content": title}}]}}
+    else:
+        parent = {"page_id": parent_id}
+        properties = {"title": {"title": [{"text": {"content": title}}]}}
+
+    children = notion.build_paragraph_blocks(content) if content else []
+
+    page = await notion.create_page(parent, properties, children or None)
+    return json.dumps(
+        {"id": page["id"], "url": page.get("url", "")},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+async def notion_update_page(page_id: str, properties: str) -> str:
+    """Notion 페이지의 속성을 수정합니다.
+
+    Args:
+        page_id: 페이지 ID
+        properties: 수정할 속성 JSON 문자열 (예: '{"Status": {"status": {"name": "Done"}}}')
+    """
+    try:
+        props = json.loads(properties)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON in properties: {e}"}, ensure_ascii=False, indent=2)
+    page = await notion.update_page(page_id, props)
+    return json.dumps(
+        {"id": page["id"], "url": page.get("url", ""), "last_edited_time": page.get("last_edited_time")},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
+async def notion_get_database(database_id: str) -> str:
+    """Notion 데이터베이스의 스키마(속성 정의)를 조회합니다.
+
+    Args:
+        database_id: 데이터베이스 ID
+    """
+    db = await notion.get_database(database_id)
+    props_schema = {}
+    for key, prop in db.get("properties", {}).items():
+        prop_info: dict = {"type": prop["type"]}
+        if prop["type"] == "select":
+            prop_info["options"] = [o["name"] for o in prop.get("select", {}).get("options", [])]
+        elif prop["type"] == "multi_select":
+            prop_info["options"] = [o["name"] for o in prop.get("multi_select", {}).get("options", [])]
+        elif prop["type"] == "status":
+            prop_info["options"] = [o["name"] for o in prop.get("status", {}).get("options", [])]
+        props_schema[key] = prop_info
+    result = {
+        "id": db["id"],
+        "title": "".join(t.get("plain_text", "") for t in db.get("title", [])),
+        "url": db.get("url", ""),
+        "properties": props_schema,
+    }
+    return json.dumps(result, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_query_database(
+    database_id: str,
+    filter_by: str | None = None,
+    sorts: str | None = None,
+    page_size: int = 10,
+) -> str:
+    """Notion 데이터베이스를 쿼리하여 페이지 목록을 조회합니다.
+
+    Args:
+        database_id: 데이터베이스 ID
+        filter_by: 필터 조건 JSON 문자열 (Notion filter 형식)
+        sorts: 정렬 조건 JSON 문자열 (Notion sorts 형식)
+        page_size: 최대 결과 수
+    """
+    try:
+        filter_dict = json.loads(filter_by) if filter_by else None
+        sorts_list = json.loads(sorts) if sorts else None
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON provided: {e}"}, ensure_ascii=False, indent=2)
+    result = await notion.query_database(database_id, filter_dict, sorts_list, page_size)
+    pages = []
+    for page in result.get("results", []):
+        item: dict = {"id": page["id"]}
+        for key, prop in page.get("properties", {}).items():
+            prop_type = prop.get("type", "")
+            if prop_type == "title":
+                item["title"] = "".join(t.get("plain_text", "") for t in prop.get("title", []))
+            elif prop_type == "status":
+                item[key] = (prop.get("status") or {}).get("name", "")
+            elif prop_type == "select":
+                item[key] = (prop.get("select") or {}).get("name", "")
+            elif prop_type == "date":
+                item[key] = (prop.get("date") or {}).get("start", "")
+        item["url"] = page.get("url", "")
+        pages.append(item)
+    return json.dumps(pages, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_get_page_content(page_id: str) -> str:
+    """Notion 페이지의 본문 콘텐츠(블록)를 조회합니다.
+
+    Args:
+        page_id: 페이지 ID
+    """
+    result = await notion.get_block_children(page_id)
+    blocks = []
+    for block in result.get("results", []):
+        block_type = block.get("type", "")
+        block_data: dict = {"type": block_type, "id": block["id"]}
+        type_data = block.get(block_type, {})
+        if "rich_text" in type_data:
+            block_data["text"] = "".join(
+                t.get("plain_text", "") for t in type_data.get("rich_text", [])
+            )
+        elif block_type == "image":
+            image_type = type_data.get("type")
+            if image_type:
+                image_data = type_data.get(image_type, {})
+                block_data["url"] = image_data.get("url", "")
+        blocks.append(block_data)
+    return json.dumps(blocks, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_append_content(page_id: str, content: str) -> str:
+    """Notion 페이지에 텍스트 콘텐츠를 추가합니다.
+
+    Args:
+        page_id: 페이지 ID
+        content: 추가할 텍스트 내용
+    """
+    children = notion.build_paragraph_blocks(content)
+    result = await notion.append_block_children(page_id, children)
+    added = result.get("results", [])
+    return json.dumps(
+        {"added_blocks": len(added), "ids": [b["id"] for b in added]},
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 # ── FastAPI integration ─────────────────────────────────────
