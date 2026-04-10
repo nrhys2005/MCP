@@ -206,23 +206,29 @@ async def create_issue(
     summary: str,
     description: str = "",
     issue_type: str = "Task",
+    parent_key: str | None = None,
+    labels: list[str] | None = None,
 ) -> dict:
     """새로운 Jira 이슈를 생성합니다."""
-    payload = {
-        "fields": {
-            "project": {"key": project_key},
-            "summary": summary,
-            "description": _markdown_to_adf(description),
-            "issuetype": {"name": issue_type},
-        }
+    fields: dict = {
+        "project": {"key": project_key},
+        "summary": summary,
+        "description": _markdown_to_adf(description),
+        "issuetype": {"name": issue_type},
     }
+    if parent_key:
+        fields["parent"] = {"key": parent_key}
+    if labels:
+        fields["labels"] = labels
+    payload = {"fields": fields}
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{settings.jira_base_url}/rest/api/3/issue",
             headers=_auth_header(),
             json=payload,
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise Exception(f"Jira API error {resp.status_code}: {resp.text}")
         return resp.json()
 
 

@@ -79,6 +79,8 @@ async def jira_create_issue(
     summary: str,
     description: str = "",
     issue_type: str = "Task",
+    parent_key: str | None = None,
+    labels: list[str] | None = None,
 ) -> str:
     """새로운 Jira 이슈를 생성합니다.
 
@@ -87,8 +89,12 @@ async def jira_create_issue(
         summary: 이슈 제목
         description: 이슈 설명
         issue_type: 이슈 타입 (Task, Bug, Story 등)
+        parent_key: 상위 이슈 키 (예: "RA1-11941")
+        labels: 라벨 목록 (예: ["4스프린트"])
     """
-    result = await jira.create_issue(project_key, summary, description, issue_type)
+    result = await jira.create_issue(
+        project_key, summary, description, issue_type, parent_key, labels
+    )
     return json.dumps(
         {"key": result["key"], "self": result["self"]},
         ensure_ascii=False,
