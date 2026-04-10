@@ -88,7 +88,7 @@ def _markdown_to_adf(text: str) -> dict:
             content.append({"type": "bulletList", "content": list_items})
             continue
 
-        # 코드 블록 (```)
+        # 코드 블록 (``` 또는 {code})
         if line.strip().startswith("```"):
             language = line.strip().removeprefix("```").strip() or None
             code_lines = []
@@ -103,6 +103,24 @@ def _markdown_to_adf(text: str) -> dict:
             content.append({
                 "type": "codeBlock",
                 "attrs": attrs,
+                "content": [{"type": "text", "text": "\n".join(code_lines)}],
+            })
+            continue
+
+        # Jira 위키 코드 블록 ({code} 또는 {noformat})
+        wiki_code_match = re.match(r"^\{(code|noformat)\}$", line.strip())
+        if wiki_code_match:
+            code_lines = []
+            i += 1
+            while i < len(lines) and not re.match(
+                r"^\{(code|noformat)\}$", lines[i].strip()
+            ):
+                code_lines.append(lines[i])
+                i += 1
+            i += 1  # {code} 닫기 스킵
+            content.append({
+                "type": "codeBlock",
+                "attrs": {},
                 "content": [{"type": "text", "text": "\n".join(code_lines)}],
             })
             continue
@@ -284,16 +302,7 @@ async def attach_file(issue_key: str, file_path: str) -> list[dict]:
 async def add_comment(issue_key: str, comment: str) -> dict:
     """Jira 이슈에 코멘트를 추가합니다."""
     payload = {
-        "body": {
-            "type": "doc",
-            "version": 1,
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": comment}],
-                }
-            ],
-        }
+        "body": _markdown_to_adf(comment),
     }
     async with httpx.AsyncClient() as client:
         resp = await client.post(
