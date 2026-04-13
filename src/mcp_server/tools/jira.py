@@ -210,11 +210,12 @@ async def create_issue(
     labels: list[str] | None = None,
 ) -> dict:
     """새로운 Jira 이슈를 생성합니다."""
+    issue_type_str = str(issue_type).strip()
     fields: dict = {
         "project": {"key": project_key},
         "summary": summary,
         "description": _markdown_to_adf(description),
-        "issuetype": {"id": issue_type} if issue_type.isdigit() else {"name": issue_type},
+        "issuetype": {"id": issue_type_str} if issue_type_str.isdigit() else {"name": issue_type_str},
     }
     if parent_key:
         fields["parent"] = {"key": parent_key}
