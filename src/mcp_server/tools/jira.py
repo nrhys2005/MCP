@@ -214,7 +214,7 @@ async def create_issue(
         "project": {"key": project_key},
         "summary": summary,
         "description": _markdown_to_adf(description),
-        "issuetype": {"name": issue_type},
+        "issuetype": {"id": issue_type} if issue_type.isdigit() else {"name": issue_type},
     }
     if parent_key:
         fields["parent"] = {"key": parent_key}
