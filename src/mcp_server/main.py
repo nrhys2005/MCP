@@ -1,6 +1,10 @@
 import json
 import logging
 
+import truststore
+
+truststore.inject_into_ssl()
+
 import uvicorn
 from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
