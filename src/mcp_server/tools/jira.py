@@ -271,7 +271,9 @@ async def update_issue(
             )
             transitions_resp.raise_for_status()
             for t in transitions_resp.json()["transitions"]:
-                if t["name"].lower() == status.lower():
+                t_name = t["name"].lower()
+                t_to_name = t.get("to", {}).get("name", "").lower()
+                if status.lower() in (t_name, t_to_name):
                     await client.post(
                         f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/transitions",
                         headers=_auth_header(),
