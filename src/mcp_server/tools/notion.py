@@ -29,7 +29,10 @@ def _normalize_id(raw_id: str) -> str:
     """하이픈 없는 32자 hex ID를 UUID 형식으로 변환합니다."""
     cleaned = raw_id.replace("-", "")
     if len(cleaned) == 32:
-        return str(uuid.UUID(cleaned))
+        try:
+            return str(uuid.UUID(cleaned))
+        except ValueError:
+            pass
     return raw_id
 
 
@@ -53,6 +56,9 @@ async def get_page(page_id: str) -> dict:
 
 async def create_page(parent: dict, properties: dict, children: list | None = None) -> dict:
     """Notion 페이지를 생성합니다."""
+    for key in ("page_id", "database_id"):
+        if key in parent:
+            parent[key] = _normalize_id(parent[key])
     body: dict = {"parent": parent, "properties": properties}
     if children:
         body["children"] = children
