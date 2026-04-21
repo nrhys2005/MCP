@@ -249,6 +249,7 @@ def parse_markdown_to_blocks(text: str) -> list[dict]:
     - code (코드 블록)
     - quote (인용)
     - divider (구분선)
+    - table (마크다운 테이블)
     - paragraph (기본)
     - 인라인: bold, italic, strikethrough, code, link
     """
@@ -272,6 +273,44 @@ def parse_markdown_to_blocks(text: str) -> list[dict]:
             code_content = "\n".join(code_lines)
             rich_text = [{"type": "text", "text": {"content": code_content}}]
             blocks.extend(_make_block("code", rich_text, language=language))
+            continue
+
+        # 마크다운 테이블 (헤더 행 + 구분선 행이 있어야 테이블로 인식)
+        table_match = re.match(r"^\|(.+)\|$", line)
+        if table_match and i + 1 < len(lines) and re.match(r"^\|[-:\s|]+\|$", lines[i + 1]):
+            # 헤더 행 파싱
+            header_cells = [c.strip() for c in table_match.group(1).split("|")]
+            table_rows = [header_cells]
+            i += 2  # 헤더 행 + 구분선 행 건너뛰기
+            # 데이터 행 파싱
+            while i < len(lines):
+                row_match = re.match(r"^\|(.+)\|$", lines[i])
+                if not row_match:
+                    break
+                cells = [c.strip() for c in row_match.group(1).split("|")]
+                table_rows.append(cells)
+                i += 1
+            # Notion table 블록 생성
+            table_width = len(header_cells)
+            table_children = []
+            for row in table_rows:
+                padded = row[:table_width] + [""] * max(0, table_width - len(row))
+                cells = [_parse_inline(cell) for cell in padded]
+                table_children.append({
+                    "object": "block",
+                    "type": "table_row",
+                    "table_row": {"cells": cells},
+                })
+            blocks.append({
+                "object": "block",
+                "type": "table",
+                "table": {
+                    "table_width": table_width,
+                    "has_column_header": True,
+                    "has_row_header": False,
+                    "children": table_children,
+                },
+            })
             continue
 
         # 구분선
