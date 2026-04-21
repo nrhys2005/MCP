@@ -88,22 +88,43 @@ async def query_database(
 ) -> dict:
     """Notion 데이터베이스를 쿼리합니다."""
     database_id = _normalize_id(database_id)
-    body: dict = {"page_size": page_size}
-    if filter_by:
-        body["filter"] = filter_by
-    if sorts:
-        body["sorts"] = sorts
-    resp = await _get_client().post(f"/databases/{database_id}/query", json=body)
-    resp.raise_for_status()
-    return resp.json()
+    all_results: list = []
+    cursor: str | None = None
+    while True:
+        body: dict = {"page_size": page_size}
+        if filter_by:
+            body["filter"] = filter_by
+        if sorts:
+            body["sorts"] = sorts
+        if cursor:
+            body["start_cursor"] = cursor
+        resp = await _get_client().post(f"/databases/{database_id}/query", json=body)
+        resp.raise_for_status()
+        data = resp.json()
+        all_results.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return {"results": all_results, "has_more": False, "next_cursor": None}
 
 
 async def get_block_children(block_id: str, page_size: int = 100) -> dict:
-    """Notion 블록의 하위 블록(페이지 콘텐츠)을 조회합니다."""
+    """Notion 블록의 하위 블록(페이지 콘텐츠)을 모두 조회합니다. (cursor 자동 페이지네이션)"""
     block_id = _normalize_id(block_id)
-    resp = await _get_client().get(f"/blocks/{block_id}/children", params={"page_size": page_size})
-    resp.raise_for_status()
-    return resp.json()
+    all_results: list = []
+    cursor: str | None = None
+    while True:
+        params: dict = {"page_size": page_size}
+        if cursor:
+            params["start_cursor"] = cursor
+        resp = await _get_client().get(f"/blocks/{block_id}/children", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        all_results.extend(data.get("results", []))
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return {"results": all_results, "has_more": False, "next_cursor": None}
 
 
 async def append_block_children(block_id: str, children: list) -> dict:
