@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import httpx
@@ -137,16 +138,203 @@ async def append_block_children(block_id: str, children: list) -> dict:
     return resp.json()
 
 
-def build_paragraph_blocks(text: str) -> list[dict]:
-    """긴 텍스트를 Notion API 2000자 제한에 맞춰 paragraph 블록 리스트로 변환합니다."""
+def _parse_inline(text: str) -> list[dict]:
+    """마크다운 인라인 서식(bold, italic, code, strikethrough, link)을 Notion rich_text 배열로 변환합니다."""
+    rich_text: list[dict] = []
+    pattern = re.compile(
+        r"(?P<bold_italic>\*\*\*(.+?)\*\*\*)"
+        r"|(?P<bold>\*\*(.+?)\*\*)"
+        r"|(?P<italic>\*(.+?)\*)"
+        r"|(?P<strike>~~(.+?)~~)"
+        r"|(?P<code>`(.+?)`)"
+        r"|(?P<link>\[([^\]]+)\]\(([^)]+)\))"
+    )
+    pos = 0
+    for m in pattern.finditer(text):
+        if m.start() > pos:
+            rich_text.append({"type": "text", "text": {"content": text[pos : m.start()]}})
+        if m.group("bold_italic"):
+            content = m.group(2)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": content},
+                "annotations": {"bold": True, "italic": True},
+            })
+        elif m.group("bold"):
+            content = m.group(4)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": content},
+                "annotations": {"bold": True},
+            })
+        elif m.group("italic"):
+            content = m.group(6)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": content},
+                "annotations": {"italic": True},
+            })
+        elif m.group("strike"):
+            content = m.group(8)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": content},
+                "annotations": {"strikethrough": True},
+            })
+        elif m.group("code"):
+            content = m.group(10)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": content},
+                "annotations": {"code": True},
+            })
+        elif m.group("link"):
+            link_text = m.group(12)
+            link_url = m.group(13)
+            rich_text.append({
+                "type": "text",
+                "text": {"content": link_text, "link": {"url": link_url}},
+            })
+        pos = m.end()
+    if pos < len(text):
+        rich_text.append({"type": "text", "text": {"content": text[pos:]}})
+    return rich_text or [{"type": "text", "text": {"content": text}}]
+
+
+def _split_rich_text(rich_text: list[dict]) -> list[list[dict]]:
+    """Notion API 2000자 제한에 맞춰 rich_text 배열을 분할합니다."""
+    chunks: list[list[dict]] = []
+    current: list[dict] = []
+    current_len = 0
+    for rt in rich_text:
+        content = rt["text"]["content"]
+        if current_len + len(content) <= _MAX_RICH_TEXT_LENGTH:
+            current.append(rt)
+            current_len += len(content)
+        else:
+            remaining = content
+            while remaining:
+                space = _MAX_RICH_TEXT_LENGTH - current_len
+                if space <= 0:
+                    chunks.append(current)
+                    current = []
+                    current_len = 0
+                    space = _MAX_RICH_TEXT_LENGTH
+                piece = remaining[:space]
+                remaining = remaining[space:]
+                new_rt = {**rt, "text": {**rt["text"], "content": piece}}
+                current.append(new_rt)
+                current_len += len(piece)
+    if current:
+        chunks.append(current)
+    return chunks or [[{"type": "text", "text": {"content": ""}}]]
+
+
+def _make_block(block_type: str, rich_text: list[dict], **extra: object) -> list[dict]:
+    """블록 타입과 rich_text로 Notion 블록을 생성합니다. 2000자 초과 시 여러 블록으로 분할합니다."""
     blocks = []
-    for i in range(0, len(text), _MAX_RICH_TEXT_LENGTH):
-        chunk = text[i : i + _MAX_RICH_TEXT_LENGTH]
-        blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {
-                "rich_text": [{"type": "text", "text": {"content": chunk}}],
-            },
-        })
+    for chunk in _split_rich_text(rich_text):
+        body = {"rich_text": chunk, **extra}
+        blocks.append({"object": "block", "type": block_type, block_type: body})
     return blocks
+
+
+def parse_markdown_to_blocks(text: str) -> list[dict]:
+    """마크다운 텍스트를 Notion 블록 리스트로 변환합니다.
+
+    지원하는 블록 타입:
+    - heading_1 / heading_2 / heading_3
+    - bulleted_list_item / numbered_list_item
+    - to_do (체크박스)
+    - code (코드 블록)
+    - quote (인용)
+    - divider (구분선)
+    - paragraph (기본)
+    - 인라인: bold, italic, strikethrough, code, link
+    """
+    blocks: list[dict] = []
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # 코드 블록
+        code_match = re.match(r"^```(\w*)", line)
+        if code_match:
+            language = code_match.group(1) or "plain text"
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            if i < len(lines):
+                i += 1  # skip closing ```
+            code_content = "\n".join(code_lines)
+            rich_text = [{"type": "text", "text": {"content": code_content}}]
+            blocks.extend(_make_block("code", rich_text, language=language))
+            continue
+
+        # 구분선
+        if re.match(r"^(-{3,}|\*{3,}|_{3,})\s*$", line):
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
+            i += 1
+            continue
+
+        # 헤딩
+        heading_match = re.match(r"^(#{1,3})\s+(.+)$", line)
+        if heading_match:
+            level = len(heading_match.group(1))
+            content = heading_match.group(2)
+            block_type = f"heading_{level}"
+            blocks.extend(_make_block(block_type, _parse_inline(content)))
+            i += 1
+            continue
+
+        # 체크박스
+        todo_match = re.match(r"^[-*]\s+\[([ xX])\]\s+(.+)$", line)
+        if todo_match:
+            checked = todo_match.group(1) in ("x", "X")
+            content = todo_match.group(2)
+            blocks.extend(_make_block("to_do", _parse_inline(content), checked=checked))
+            i += 1
+            continue
+
+        # 불릿 리스트
+        bullet_match = re.match(r"^[-*+]\s+(.+)$", line)
+        if bullet_match:
+            content = bullet_match.group(1)
+            blocks.extend(_make_block("bulleted_list_item", _parse_inline(content)))
+            i += 1
+            continue
+
+        # 숫자 리스트
+        numbered_match = re.match(r"^\d+\.\s+(.+)$", line)
+        if numbered_match:
+            content = numbered_match.group(1)
+            blocks.extend(_make_block("numbered_list_item", _parse_inline(content)))
+            i += 1
+            continue
+
+        # 인용
+        quote_match = re.match(r"^>\s*(.*)$", line)
+        if quote_match:
+            content = quote_match.group(1)
+            blocks.extend(_make_block("quote", _parse_inline(content)))
+            i += 1
+            continue
+
+        # 빈 줄 무시
+        if not line.strip():
+            i += 1
+            continue
+
+        # 기본 paragraph
+        blocks.extend(_make_block("paragraph", _parse_inline(line)))
+        i += 1
+
+    return blocks
+
+
+def build_paragraph_blocks(text: str) -> list[dict]:
+    """마크다운 텍스트를 Notion 블록 리스트로 변환합니다. (하위 호환)"""
+    return parse_markdown_to_blocks(text)
