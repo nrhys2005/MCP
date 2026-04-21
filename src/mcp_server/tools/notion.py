@@ -90,8 +90,9 @@ async def query_database(
     database_id = _normalize_id(database_id)
     all_results: list = []
     cursor: str | None = None
-    while True:
-        body: dict = {"page_size": page_size}
+    while len(all_results) < page_size:
+        current_batch_size = min(page_size - len(all_results), 100)
+        body: dict = {"page_size": current_batch_size}
         if filter_by:
             body["filter"] = filter_by
         if sorts:
@@ -105,7 +106,7 @@ async def query_database(
         if not data.get("has_more"):
             break
         cursor = data.get("next_cursor")
-    return {"results": all_results, "has_more": False, "next_cursor": None}
+    return {"results": all_results[:page_size], "has_more": False, "next_cursor": None}
 
 
 async def get_block_children(block_id: str, page_size: int = 100) -> dict:
@@ -113,8 +114,9 @@ async def get_block_children(block_id: str, page_size: int = 100) -> dict:
     block_id = _normalize_id(block_id)
     all_results: list = []
     cursor: str | None = None
+    request_page_size = min(page_size, 100)
     while True:
-        params: dict = {"page_size": page_size}
+        params: dict = {"page_size": request_page_size}
         if cursor:
             params["start_cursor"] = cursor
         resp = await _get_client().get(f"/blocks/{block_id}/children", params=params)
