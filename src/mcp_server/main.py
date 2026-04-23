@@ -575,7 +575,7 @@ async def notion_get_database(database_id: str) -> str:
 @mcp.tool()
 async def notion_query_database(
     database_id: str,
-    filter_by: str | None = None,
+    filter_by: str | dict | None = None,
     sorts: str | None = None,
     page_size: int = 10,
 ) -> str:
@@ -584,15 +584,24 @@ async def notion_query_database(
     Args:
         database_id: 데이터베이스 ID
         filter_by: 필터 조건 JSON 문자열 (Notion filter 형식)
+            예: '{"property": "Action", "select": {"equals": "monitor"}}'
         sorts: 정렬 조건 JSON 문자열 (Notion sorts 형식)
+            예: '[{"property": "날짜", "direction": "descending"}]'
         page_size: 최대 결과 수
     """
     try:
-        filter_dict = json.loads(filter_by) if filter_by else None
+        if isinstance(filter_by, str):
+            filter_dict = json.loads(filter_by) if filter_by else None
+        elif isinstance(filter_by, dict):
+            filter_dict = filter_by
+        else:
+            filter_dict = None
         sorts_list = json.loads(sorts) if sorts else None
     except json.JSONDecodeError as e:
         return json.dumps({"error": f"Invalid JSON provided: {e}"}, ensure_ascii=False, indent=2)
     result = await notion.query_database(database_id, filter_dict, sorts_list, page_size)
+    if "error" in result:
+        return json.dumps(result, ensure_ascii=False, indent=2)
     pages = []
     for page in result.get("results", []):
         item: dict = {"id": page["id"]}

@@ -101,7 +101,8 @@ async def query_database(
         if cursor:
             body["start_cursor"] = cursor
         resp = await _get_client().post(f"/databases/{database_id}/query", json=body)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            return {"error": f"Notion API error: {resp.status_code}", "detail": resp.json()}
         data = resp.json()
         all_results.extend(data.get("results", []))
         if not data.get("has_more"):
