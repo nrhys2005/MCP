@@ -576,7 +576,7 @@ async def notion_get_database(database_id: str) -> str:
 async def notion_query_database(
     database_id: str,
     filter_by: str | dict | None = None,
-    sorts: str | None = None,
+    sorts: str | list | None = None,
     page_size: int = 10,
 ) -> str:
     """Notion 데이터베이스를 쿼리하여 페이지 목록을 조회합니다.
@@ -592,11 +592,13 @@ async def notion_query_database(
     try:
         if isinstance(filter_by, str):
             filter_dict = json.loads(filter_by) if filter_by else None
-        elif isinstance(filter_by, dict):
-            filter_dict = filter_by
         else:
-            filter_dict = None
-        sorts_list = json.loads(sorts) if sorts else None
+            filter_dict = filter_by if isinstance(filter_by, dict) else None
+
+        if isinstance(sorts, str):
+            sorts_list = json.loads(sorts) if sorts else None
+        else:
+            sorts_list = sorts if isinstance(sorts, list) else None
     except json.JSONDecodeError as e:
         return json.dumps({"error": f"Invalid JSON provided: {e}"}, ensure_ascii=False, indent=2)
     result = await notion.query_database(database_id, filter_dict, sorts_list, page_size)
