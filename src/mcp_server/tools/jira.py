@@ -6,15 +6,24 @@ import httpx
 
 from mcp_server.config import settings
 
+_client: httpx.AsyncClient | None = None
+_DEFAULT_TIMEOUT = 30.0
 
-def _auth_header() -> dict[str, str]:
-    credentials = base64.b64encode(
-        f"{settings.jira_email}:{settings.jira_api_token}".encode()
-    ).decode()
-    return {
-        "Authorization": f"Basic {credentials}",
-        "Content-Type": "application/json",
-    }
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        credentials = base64.b64encode(
+            f"{settings.jira_email}:{settings.jira_api_token}".encode()
+        ).decode()
+        _client = httpx.AsyncClient(
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json",
+            },
+            timeout=_DEFAULT_TIMEOUT,
+        )
+    return _client
 
 
 def _markdown_to_adf(text: str) -> dict:
@@ -96,7 +105,8 @@ def _markdown_to_adf(text: str) -> dict:
             while i < len(lines) and not lines[i].strip().startswith("```"):
                 code_lines.append(lines[i])
                 i += 1
-            i += 1  # ``` 닫기 스킵
+            if i < len(lines):
+                i += 1  # ``` 닫기 스킵
             attrs = {}
             if language:
                 attrs["language"] = language
@@ -117,7 +127,8 @@ def _markdown_to_adf(text: str) -> dict:
             ):
                 code_lines.append(lines[i])
                 i += 1
-            i += 1  # {code} 닫기 스킵
+            if i < len(lines):
+                i += 1  # {code} 닫기 스킵
             content.append({
                 "type": "codeBlock",
                 "attrs": {},
@@ -176,29 +187,27 @@ def _parse_inline(text: str) -> list[dict]:
 
 async def search_issues(jql: str, max_results: int = 10) -> dict:
     """JQL을 사용해 Jira 이슈를 검색합니다."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{settings.jira_base_url}/rest/api/3/search/jql",
-            headers=_auth_header(),
-            json={
-                "jql": jql,
-                "maxResults": max_results,
-                "fields": ["summary", "status", "assignee", "priority", "parent"],
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
+    client = _get_client()
+    resp = await client.post(
+        f"{settings.jira_base_url}/rest/api/3/search/jql",
+        json={
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": ["summary", "status", "assignee", "priority", "parent"],
+        },
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def get_issue(issue_key: str) -> dict:
     """특정 Jira 이슈의 상세 정보를 가져옵니다."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}",
-            headers=_auth_header(),
-        )
-        resp.raise_for_status()
-        return resp.json()
+    client = _get_client()
+    resp = await client.get(
+        f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}",
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def create_issue(
@@ -222,15 +231,13 @@ async def create_issue(
     if labels:
         fields["labels"] = labels
     payload = {"fields": fields}
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{settings.jira_base_url}/rest/api/3/issue",
-            headers=_auth_header(),
-            json=payload,
-        )
-        if resp.status_code >= 400:
-            raise Exception(f"Jira API error {resp.status_code}: {resp.text}")
-        return resp.json()
+    client = _get_client()
+    resp = await client.post(
+        f"{settings.jira_base_url}/rest/api/3/issue",
+        json=payload,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def update_issue(
@@ -255,29 +262,31 @@ async def update_issue(
     if labels is not None:
         fields["labels"] = labels
 
-    async with httpx.AsyncClient() as client:
-        if fields:
-            resp = await client.put(
-                f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}",
-                headers=_auth_header(),
-                json={"fields": fields},
-            )
-            resp.raise_for_status()
+    client = _get_client()
+    if fields:
+        resp = await client.put(
+            f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}",
+            json={"fields": fields},
+        )
+        resp.raise_for_status()
 
-        if status is not None:
-            transitions_resp = await client.get(
-                f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/transitions",
-                headers=_auth_header(),
+    if status is not None:
+        transitions_resp = await client.get(
+            f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/transitions",
+        )
+        transitions_resp.raise_for_status()
+        transitions = transitions_resp.json()["transitions"]
+        matched = [t for t in transitions if t["name"].lower() == status.lower()]
+        if not matched:
+            available = [t["name"] for t in transitions]
+            raise ValueError(
+                f"상태 '{status}'에 해당하는 전환을 찾을 수 없습니다. "
+                f"가능한 상태: {available}"
             )
-            transitions_resp.raise_for_status()
-            for t in transitions_resp.json()["transitions"]:
-                if t["name"].lower() == status.lower():
-                    await client.post(
-                        f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/transitions",
-                        headers=_auth_header(),
-                        json={"transition": {"id": t["id"]}},
-                    )
-                    break
+        await client.post(
+            f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/transitions",
+            json={"transition": {"id": matched[0]["id"]}},
+        )
 
 
 async def attach_file(issue_key: str, file_path: str) -> list[dict]:
@@ -294,13 +303,12 @@ async def attach_file(issue_key: str, file_path: str) -> list[dict]:
         "X-Atlassian-Token": "no-check",
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         with open(path, "rb") as f:
             resp = await client.post(
                 f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/attachments",
                 headers=headers,
                 files={"file": (path.name, f)},
-                timeout=60.0,
             )
         resp.raise_for_status()
         return resp.json()
@@ -311,11 +319,10 @@ async def add_comment(issue_key: str, comment: str) -> dict:
     payload = {
         "body": _markdown_to_adf(comment),
     }
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/comment",
-            headers=_auth_header(),
-            json=payload,
-        )
-        resp.raise_for_status()
-        return resp.json()
+    client = _get_client()
+    resp = await client.post(
+        f"{settings.jira_base_url}/rest/api/3/issue/{issue_key}/comment",
+        json=payload,
+    )
+    resp.raise_for_status()
+    return resp.json()
