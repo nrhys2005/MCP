@@ -188,12 +188,10 @@ async def slack_send_message(channel: str, text: str) -> str:
         text: 전송할 메시지 내용
     """
     result = await slack.send_message(channel, text)
-    if result.get("ok"):
-        return json.dumps(
-            {"ok": True, "channel": result["channel"], "ts": result["ts"]},
-            indent=2,
-        )
-    return json.dumps({"ok": False, "error": result.get("error")}, indent=2)
+    return json.dumps(
+        {"ok": True, "channel": result["channel"], "ts": result["ts"]},
+        indent=2,
+    )
 
 
 @mcp.tool()

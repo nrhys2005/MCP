@@ -12,6 +12,9 @@ _MAX_RICH_TEXT_LENGTH = 2000
 _client: httpx.AsyncClient | None = None
 
 
+_DEFAULT_TIMEOUT = 30.0
+
+
 def _get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
@@ -22,6 +25,7 @@ def _get_client() -> httpx.AsyncClient:
                 "Notion-Version": NOTION_VERSION,
                 "Content-Type": "application/json",
             },
+            timeout=_DEFAULT_TIMEOUT,
         )
     return _client
 
