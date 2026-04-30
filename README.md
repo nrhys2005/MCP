@@ -60,6 +60,14 @@ uv run python -m mcp_server.main
 }
 ```
 
+## 주요 기능
+
+- **마크다운 변환**: Jira(마크다운→ADF), Notion(마크다운→블록) 자동 변환 지원
+  - 헤딩, 리스트, 코드 블록, 테이블, 인용, 체크박스, 인라인 서식(bold, italic, strikethrough, code, link)
+- **커서 페이지네이션**: Notion 대용량 데이터 조회 시 자동 페이지네이션
+- **ID 정규화**: Notion 하이픈 없는 32자 ID를 UUID 형식으로 자동 변환
+- **SSL 인증서**: truststore를 통한 시스템 인증서 저장소 자동 주입
+
 ## 제공 도구
 
 ### Jira (6개)
@@ -67,11 +75,11 @@ uv run python -m mcp_server.main
 | 도구 | 설명 |
 |------|------|
 | `jira_search_issues` | JQL 쿼리로 이슈 검색 |
-| `jira_get_issue` | 이슈 상세 조회 |
-| `jira_create_issue` | 이슈 생성 |
-| `jira_update_issue` | 이슈 수정 |
+| `jira_get_issue` | 이슈 상세 조회 (하위 이슈 포함) |
+| `jira_create_issue` | 이슈 생성 (상위 이슈, 라벨, 이슈 타입 ID 지원) |
+| `jira_update_issue` | 이슈 수정 (상태 전환, 담당자, 우선순위, 라벨) |
 | `jira_attach_file` | 이슈에 파일 첨부 |
-| `jira_add_comment` | 이슈에 코멘트 추가 |
+| `jira_add_comment` | 이슈에 코멘트 추가 (마크다운→ADF 변환) |
 
 ### Slack (3개)
 
@@ -85,9 +93,9 @@ uv run python -m mcp_server.main
 
 | 도구 | 설명 |
 |------|------|
-| `linear_search_issues` | 이슈 검색 |
-| `linear_get_issue` | 이슈 상세 조회 |
-| `linear_create_issue` | 이슈 생성 |
+| `linear_search_issues` | 이슈 검색 (프로젝트 필터 지원) |
+| `linear_get_issue` | 이슈 상세 조회 (상하위 이슈, 코멘트 포함) |
+| `linear_create_issue` | 이슈 생성 (우선순위, 상태, 프로젝트 지정) |
 | `linear_update_issue` | 이슈 수정 |
 | `linear_add_comment` | 이슈에 코멘트 추가 |
 | `linear_list_teams` | 팀 목록 및 워크플로 상태 조회 |
@@ -99,12 +107,12 @@ uv run python -m mcp_server.main
 |------|------|
 | `notion_search` | 페이지/데이터베이스 검색 |
 | `notion_get_page` | 페이지 속성 조회 |
-| `notion_create_page` | 페이지 생성 |
+| `notion_create_page` | 페이지 생성 (마크다운 본문 지원) |
 | `notion_update_page` | 페이지 속성 수정 |
 | `notion_get_database` | 데이터베이스 스키마 조회 |
-| `notion_query_database` | 데이터베이스 쿼리 (필터/정렬) |
-| `notion_get_page_content` | 페이지 본문 블록 조회 |
-| `notion_append_content` | 페이지에 텍스트 추가 |
+| `notion_query_database` | 데이터베이스 쿼리 (필터/정렬, 커서 페이지네이션) |
+| `notion_get_page_content` | 페이지 본문 블록 조회 (커서 페이지네이션) |
+| `notion_append_content` | 페이지에 마크다운 콘텐츠 추가 |
 
 ## 프로젝트 구조
 
@@ -113,8 +121,8 @@ src/mcp_server/
 ├── main.py          # MCP 서버 엔트리포인트 및 도구 등록
 ├── config.py        # 환경변수 설정 (pydantic-settings)
 └── tools/
-    ├── jira.py      # Jira REST API 클라이언트
+    ├── jira.py      # Jira REST API 클라이언트 (마크다운→ADF 변환)
     ├── slack.py     # Slack Web API 클라이언트
     ├── linear.py    # Linear GraphQL API 클라이언트
-    └── notion.py    # Notion REST API 클라이언트
+    └── notion.py    # Notion REST API 클라이언트 (마크다운→블록 변환, 페이지네이션)
 ```
