@@ -650,29 +650,62 @@ async def notion_query_database(
 
 
 @mcp.tool()
-async def notion_get_page_content(page_id: str) -> str:
+async def notion_get_page_content(page_id: str, recursive: bool = True) -> str:
     """Notion 페이지의 본문 콘텐츠(블록)를 조회합니다.
+    column_list, toggle 등 컨테이너 블록의 하위 블록도 재귀적으로 조회합니다.
 
     Args:
         page_id: 페이지 ID
+        recursive: 하위 블록 재귀 조회 여부 (기본값 True)
     """
-    result = await notion.get_block_children(page_id)
-    blocks = []
-    for block in result.get("results", []):
-        block_type = block.get("type", "")
-        block_data: dict = {"type": block_type, "id": block["id"]}
-        type_data = block.get(block_type, {})
-        if "rich_text" in type_data:
-            block_data["text"] = "".join(
-                t.get("plain_text", "") for t in type_data.get("rich_text", [])
-            )
-        elif block_type == "image":
-            image_type = type_data.get("type")
-            if image_type:
-                image_data = type_data.get(image_type, {})
-                block_data["url"] = image_data.get("url", "")
-        blocks.append(block_data)
+
+    def _extract_blocks(raw_blocks: list) -> list:
+        result = []
+        for block in raw_blocks:
+            block_type = block.get("type", "")
+            block_data: dict = {"type": block_type, "id": block.get("id", "")}
+            type_data = block.get(block_type, {})
+            if "rich_text" in type_data:
+                block_data["text"] = "".join(
+                    t.get("plain_text", "") for t in type_data.get("rich_text", [])
+                )
+            elif block_type == "image":
+                image_type = type_data.get("type")
+                if image_type:
+                    image_data = type_data.get(image_type, {})
+                    block_data["url"] = image_data.get("url", "")
+            elif block_type == "table_row":
+                cells = type_data.get("cells", [])
+                block_data["cells"] = [
+                    "".join(t.get("plain_text", "") for t in cell) for cell in cells
+                ]
+            if "_children" in block:
+                block_data["children"] = _extract_blocks(block["_children"])
+            result.append(block_data)
+        return result
+
+    if recursive:
+        raw_blocks = await notion.get_block_children_recursive(page_id, max_depth=3)
+    else:
+        raw = await notion.get_block_children(page_id)
+        raw_blocks = raw.get("results", [])
+    blocks = _extract_blocks(raw_blocks)
     return json.dumps(blocks, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def notion_delete_block(block_id: str) -> str:
+    """Notion 블록을 삭제합니다. 페이지 내의 특정 블록을 제거할 때 사용합니다.
+
+    Args:
+        block_id: 삭제할 블록 ID
+    """
+    result = await notion.delete_block(block_id)
+    return json.dumps(
+        {"deleted": True, "id": result.get("id", block_id)},
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @mcp.tool()

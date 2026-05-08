@@ -1,3 +1,4 @@
+import asyncio
 import re
 import uuid
 
@@ -147,6 +148,30 @@ async def get_block_children(block_id: str, page_size: int = 100) -> dict:
             break
         cursor = data.get("next_cursor")
     return {"results": all_results, "has_more": False, "next_cursor": None}
+
+
+async def get_block_children_recursive(block_id: str, max_depth: int = 3) -> list:
+    """Notion 블록의 하위 블록을 재귀적으로 조회합니다. column_list, toggle 등 컨테이너 블록 내부까지 탐색합니다."""
+    result = await get_block_children(block_id)
+    blocks = result.get("results", [])
+    if max_depth <= 0:
+        return blocks
+    children_blocks = [b for b in blocks if b.get("has_children")]
+    if children_blocks:
+        children_results = await asyncio.gather(
+            *(get_block_children_recursive(b["id"], max_depth - 1) for b in children_blocks)
+        )
+        for block, children in zip(children_blocks, children_results):
+            block["_children"] = children
+    return blocks
+
+
+async def delete_block(block_id: str) -> dict:
+    """Notion 블록을 삭제(아카이브)합니다."""
+    block_id = _normalize_id(block_id)
+    resp = await _get_client().delete(f"/blocks/{block_id}")
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def append_block_children(block_id: str, children: list) -> dict:
