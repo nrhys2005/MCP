@@ -709,15 +709,16 @@ async def notion_delete_block(block_id: str) -> str:
 
 
 @mcp.tool()
-async def notion_append_content(page_id: str, content: str) -> str:
+async def notion_append_content(page_id: str, content: str, after_block_id: str | None = None) -> str:
     """Notion 페이지에 텍스트 콘텐츠를 추가합니다.
 
     Args:
         page_id: 페이지 ID
         content: 추가할 텍스트 내용
+        after_block_id: 이 블록 ID 뒤에 삽입 (미지정 시 페이지 끝에 추가)
     """
     children = notion.build_paragraph_blocks(content)
-    result = await notion.append_block_children(page_id, children)
+    result = await notion.append_block_children(page_id, children, after=after_block_id)
     added = result.get("results", [])
     return json.dumps(
         {"added_blocks": len(added), "ids": [b["id"] for b in added]},

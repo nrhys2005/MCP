@@ -174,10 +174,13 @@ async def delete_block(block_id: str) -> dict:
     return resp.json()
 
 
-async def append_block_children(block_id: str, children: list) -> dict:
-    """Notion 블록에 하위 블록(콘텐츠)을 추가합니다."""
+async def append_block_children(block_id: str, children: list, after: str | None = None) -> dict:
+    """Notion 블록에 하위 블록(콘텐츠)을 추가합니다. after를 지정하면 해당 블록 뒤에 삽입됩니다."""
     block_id = _normalize_id(block_id)
-    resp = await _get_client().patch(f"/blocks/{block_id}/children", json={"children": children})
+    body: dict = {"children": children}
+    if after:
+        body["after"] = _normalize_id(after)
+    resp = await _get_client().patch(f"/blocks/{block_id}/children", json=body)
     resp.raise_for_status()
     return resp.json()
 
