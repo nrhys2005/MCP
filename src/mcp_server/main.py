@@ -544,6 +544,35 @@ async def notion_update_page(page_id: str, properties: str) -> str:
 
 
 @mcp.tool()
+async def notion_create_database(
+    parent_page_id: str,
+    title: str,
+    properties: str,
+) -> str:
+    """Notion 페이지 하위에 인라인 데이터베이스를 생성합니다.
+
+    Args:
+        parent_page_id: 부모 페이지 ID
+        title: 데이터베이스 제목
+        properties: 속성 정의 JSON 문자열
+            예: '{"항목": {"title": {}}, "금액": {"number": {"format": "number"}}, "카테고리": {"select": {"options": [{"name": "보험"}, {"name": "생활"}]}}}'
+    """
+    try:
+        props = json.loads(properties)
+    except json.JSONDecodeError as e:
+        return json.dumps({"error": f"Invalid JSON in properties: {e}"}, ensure_ascii=False, indent=2)
+    db = await notion.create_database(parent_page_id, title, props)
+    props_schema = {}
+    for key, prop in db.get("properties", {}).items():
+        props_schema[key] = {"type": prop["type"]}
+    return json.dumps(
+        {"id": db["id"], "url": db.get("url", ""), "properties": props_schema},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+@mcp.tool()
 async def notion_get_database(database_id: str) -> str:
     """Notion 데이터베이스의 스키마(속성 정의)를 조회합니다.
 

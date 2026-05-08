@@ -80,6 +80,20 @@ async def update_page(page_id: str, properties: dict) -> dict:
     return resp.json()
 
 
+async def create_database(parent_page_id: str, title: str, properties: dict) -> dict:
+    """Notion 데이터베이스를 생성합니다."""
+    parent_page_id = _normalize_id(parent_page_id)
+    body: dict = {
+        "parent": {"type": "page_id", "page_id": parent_page_id},
+        "title": [{"type": "text", "text": {"content": title}}],
+        "is_inline": True,
+        "properties": properties,
+    }
+    resp = await _get_client().post("/databases", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def get_database(database_id: str) -> dict:
     """Notion 데이터베이스 정보를 조회합니다."""
     database_id = _normalize_id(database_id)
