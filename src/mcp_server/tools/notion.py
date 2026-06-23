@@ -174,6 +174,39 @@ async def delete_block(block_id: str) -> dict:
     return resp.json()
 
 
+async def get_block(block_id: str) -> dict:
+    """Notion 단일 블록 정보를 조회합니다."""
+    block_id = _normalize_id(block_id)
+    resp = await _get_client().get(f"/blocks/{block_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def update_block(block_id: str, body: dict) -> dict:
+    """Notion 블록을 수정합니다. body는 {block_type: {...}} 형식."""
+    block_id = _normalize_id(block_id)
+    resp = await _get_client().patch(f"/blocks/{block_id}", json=body)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _split_rich_text_items(rich_text: list[dict]) -> list[dict]:
+    """rich_text 배열의 각 item content가 2000자를 넘으면 동일 서식으로 여러 item으로 분할합니다.
+    (블록을 새로 만들지는 않음 — 단일 블록 내 rich_text array용)
+    """
+    result: list[dict] = []
+    for rt in rich_text:
+        content = rt.get("text", {}).get("content", "")
+        if len(content) <= _MAX_RICH_TEXT_LENGTH:
+            result.append(rt)
+            continue
+        for i in range(0, len(content), _MAX_RICH_TEXT_LENGTH):
+            piece = content[i : i + _MAX_RICH_TEXT_LENGTH]
+            new_rt = {**rt, "text": {**rt["text"], "content": piece}}
+            result.append(new_rt)
+    return result
+
+
 async def append_block_children(block_id: str, children: list, after: str | None = None) -> dict:
     """Notion 블록에 하위 블록(콘텐츠)을 추가합니다. after를 지정하면 해당 블록 뒤에 삽입됩니다."""
     block_id = _normalize_id(block_id)
