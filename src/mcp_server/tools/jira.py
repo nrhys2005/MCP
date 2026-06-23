@@ -404,3 +404,24 @@ async def delete_comment(issue_key: str, comment_id: str) -> None:
         f"/rest/api/3/issue/{issue_key}/comment/{comment_id}"
     )
     _raise_for_status(resp)
+
+
+async def delete_issue(issue_key: str, delete_subtasks: bool = False) -> None:
+    """Jira 이슈를 삭제합니다.
+
+    삭제 권한이 없으면 403, 이슈가 존재하지 않으면 404 를 반환한다.
+    하위 작업이 있는데 delete_subtasks=False 면 400 을 반환한다.
+    성공 시 204 No Content.
+
+    빈 ``issue_key`` 가 들어오면 ``/rest/api/3/issue/`` 로 잘못된 DELETE 가 나가
+    Atlassian 측에서 405 / collection endpoint 동작이 섞일 수 있어 호출 측
+    버그가 가려진다. 클라이언트 단에서 fail-fast.
+    """
+    cleaned_key = issue_key.strip()
+    if not cleaned_key:
+        raise ValueError("issue_key cannot be empty")
+    resp = await _get_client().delete(
+        f"/rest/api/3/issue/{cleaned_key}",
+        params={"deleteSubtasks": "true" if delete_subtasks else "false"},
+    )
+    _raise_for_status(resp)
