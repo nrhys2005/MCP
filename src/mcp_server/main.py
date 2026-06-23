@@ -85,25 +85,80 @@ async def jira_create_issue(
     issue_type: str = "Task",
     parent_key: str | None = None,
     labels: list[str] | None = None,
+    custom_fields: str | None = None,
 ) -> str:
     """새로운 Jira 이슈를 생성합니다.
 
     Args:
         project_key: 프로젝트 키 (예: "PROJ")
         summary: 이슈 제목
-        description: 이슈 설명
-        issue_type: 이슈 타입 (Task, Bug, Story 등)
+        description: 이슈 설명 (markdown — 빈 문자열이면 description 필드 생략)
+        issue_type: 이슈 타입 (Task, Bug, Story, Sub-task 등)
         parent_key: 상위 이슈 키 (예: "RA1-11941")
         labels: 라벨 목록 (예: ["4스프린트"])
+        custom_fields: 프로젝트 required 커스텀 필드 JSON 문자열.
+            예: '{"customfield_10020": 123, "customfield_10026": 3}'
+            (Sprint ID + Story Points). 필요한 필드 ID 는 jira_get_create_meta 로 확인.
     """
+    custom_dict: dict | None = None
+    if custom_fields:
+        try:
+            custom_dict = json.loads(custom_fields)
+        except json.JSONDecodeError as e:
+            return json.dumps(
+                {"error": f"Invalid JSON in custom_fields: {e}"},
+                ensure_ascii=False,
+                indent=2,
+            )
     result = await jira.create_issue(
-        project_key, summary, description, issue_type, parent_key, labels
+        project_key,
+        summary,
+        description,
+        issue_type,
+        parent_key,
+        labels,
+        custom_fields=custom_dict,
     )
     return json.dumps(
         {"key": result["key"], "self": result["self"]},
         ensure_ascii=False,
         indent=2,
     )
+
+
+@mcp.tool()
+async def jira_get_create_meta(project_key: str, issue_type: str | None = None) -> str:
+    """프로젝트의 issue type 별 필수/선택 필드 메타데이터를 조회합니다.
+
+    400 Bad Request 가 발생할 때 어느 필드가 required 인지 확인용. ``custom_fields``
+    파라미터에 채울 customfield_* ID 와 default value 도 확인 가능.
+
+    Args:
+        project_key: 프로젝트 키 (예: "RA1")
+        issue_type: issue type 이름 (선택 — 미지정 시 모든 type)
+    """
+    meta = await jira.get_create_meta(project_key, issue_type)
+    summary: list[dict] = []
+    for project in meta.get("projects", []):
+        for itype in project.get("issuetypes", []):
+            required = []
+            optional = []
+            for field_id, field_info in itype.get("fields", {}).items():
+                entry = {
+                    "id": field_id,
+                    "name": field_info.get("name"),
+                    "schema_type": (field_info.get("schema") or {}).get("type"),
+                }
+                if field_info.get("required"):
+                    required.append(entry)
+                else:
+                    optional.append(entry)
+            summary.append({
+                "issue_type": itype.get("name"),
+                "required_fields": required,
+                "optional_field_count": len(optional),
+            })
+    return json.dumps(summary, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -168,12 +223,52 @@ async def jira_attach_file(issue_key: str, file_path: str) -> str:
 async def jira_add_comment(issue_key: str, comment: str) -> str:
     """Jira 이슈에 코멘트를 추가합니다.
 
+    코드 블록은 ```sql ... ``` (마크다운 펜스) 또는 {code:sql} ... {code}
+    (위키 마크업) 으로 감싸야 ADF codeBlock 으로 렌더링된다. 감싸지 않으면
+    각 줄이 별개 paragraph 로 분리돼 가독성이 깨진다.
+
     Args:
         issue_key: 이슈 키 (예: "PROJ-123")
-        comment: 코멘트 내용
+        comment: 코멘트 내용 (마크다운 — 코드는 펜스로 감쌀 것)
     """
     result = await jira.add_comment(issue_key, comment)
     return json.dumps({"id": result["id"], "created": result["created"]}, indent=2)
+
+
+@mcp.tool()
+async def jira_get_comments(issue_key: str) -> str:
+    """Jira 이슈의 코멘트 목록을 조회합니다.
+
+    Args:
+        issue_key: 이슈 키 (예: "PROJ-123")
+    """
+    result = await jira.get_comments(issue_key)
+    comments = [
+        {
+            "id": c["id"],
+            "author": (c.get("author") or {}).get("displayName", "Unknown"),
+            "created": c.get("created"),
+            "updated": c.get("updated"),
+        }
+        for c in result.get("comments", [])
+    ]
+    return json.dumps(comments, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def jira_delete_comment(issue_key: str, comment_id: str) -> str:
+    """Jira 이슈의 코멘트를 삭제합니다.
+
+    Args:
+        issue_key: 이슈 키 (예: "PROJ-123")
+        comment_id: 코멘트 ID (jira_get_comments 로 조회 가능)
+    """
+    await jira.delete_comment(issue_key, comment_id)
+    return json.dumps(
+        {"deleted": True, "issue_key": issue_key, "comment_id": comment_id},
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 # ── Slack Tools ─────────────────────────────────────────────
@@ -703,6 +798,65 @@ async def notion_delete_block(block_id: str) -> str:
     result = await notion.delete_block(block_id)
     return json.dumps(
         {"deleted": True, "id": result.get("id", block_id)},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+_NOTION_TEXT_BLOCK_TYPES = {
+    "paragraph",
+    "heading_1",
+    "heading_2",
+    "heading_3",
+    "bulleted_list_item",
+    "numbered_list_item",
+    "to_do",
+    "quote",
+    "callout",
+    "code",
+    "toggle",
+}
+
+
+@mcp.tool()
+async def notion_update_block(block_id: str, content: str) -> str:
+    """Notion 블록의 텍스트 내용을 새 내용으로 교체합니다.
+    블록 타입은 기존 그대로 유지됩니다 (paragraph→paragraph, heading_1→heading_1 등).
+    체크박스 상태(checked), 코드 언어(language) 등 기존 속성은 보존됩니다.
+    마크다운 인라인 서식(bold, italic, code, link, strikethrough) 지원.
+
+    타입 자체를 바꾸려면 notion_delete_block + notion_append_content 를 사용하세요.
+
+    Args:
+        block_id: 수정할 블록 ID
+        content: 새 텍스트 내용 (마크다운 인라인 서식 지원)
+    """
+    block = await notion.get_block(block_id)
+    block_type = block.get("type", "")
+    if block_type not in _NOTION_TEXT_BLOCK_TYPES:
+        return json.dumps(
+            {
+                "error": f"Block type '{block_type}' is not text-editable via this tool.",
+                "supported_types": sorted(_NOTION_TEXT_BLOCK_TYPES),
+                "hint": "For other block types (image/table_row/divider 등), use delete + append.",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    rich_text = notion._split_rich_text_items(notion._parse_inline(content))
+    existing = block.get(block_type, {}) or {}
+    new_body: dict = {"rich_text": rich_text}
+    for key, value in existing.items():
+        if key in ("rich_text", "children"):
+            continue
+        new_body[key] = value
+    result = await notion.update_block(block_id, {block_type: new_body})
+    return json.dumps(
+        {
+            "id": result["id"],
+            "type": result.get("type"),
+            "last_edited_time": result.get("last_edited_time"),
+        },
         ensure_ascii=False,
         indent=2,
     )
