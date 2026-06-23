@@ -70,16 +70,20 @@ uv run python -m mcp_server.main
 
 ## 제공 도구
 
-### Jira (6개)
+### Jira (10개)
 
 | 도구 | 설명 |
 |------|------|
 | `jira_search_issues` | JQL 쿼리로 이슈 검색 |
 | `jira_get_issue` | 이슈 상세 조회 (하위 이슈 포함) |
-| `jira_create_issue` | 이슈 생성 (상위 이슈, 라벨, 이슈 타입 ID 지원) |
+| `jira_create_issue` | 이슈 생성 (상위 이슈, 라벨, 이슈 타입, custom_fields 지원) |
+| `jira_get_create_meta` | 프로젝트/이슈 타입별 required·optional 필드 메타데이터 조회 |
 | `jira_update_issue` | 이슈 수정 (상태 전환, 담당자, 우선순위, 라벨) |
-| `jira_attach_file` | 이슈에 파일 첨부 |
-| `jira_add_comment` | 이슈에 코멘트 추가 (마크다운→ADF 변환) |
+| `jira_attach_file` | 이슈에 파일 첨부 (`/tmp`, `/var/tmp` 화이트리스트) |
+| `jira_add_comment` | 이슈에 코멘트 추가 (마크다운→ADF, `{code:lang}` 위키 마크업 지원) |
+| `jira_get_comments` | 이슈 코멘트 목록 조회 |
+| `jira_delete_comment` | 이슈 코멘트 삭제 |
+| `jira_delete_issue` | 이슈 삭제 (`delete_subtasks` 로 하위 작업 동반 삭제) |
 
 ### Slack (3개)
 
@@ -101,7 +105,7 @@ uv run python -m mcp_server.main
 | `linear_list_teams` | 팀 목록 및 워크플로 상태 조회 |
 | `linear_list_projects` | 프로젝트 목록 조회 |
 
-### Notion (8개)
+### Notion (11개)
 
 | 도구 | 설명 |
 |------|------|
@@ -109,10 +113,13 @@ uv run python -m mcp_server.main
 | `notion_get_page` | 페이지 속성 조회 |
 | `notion_create_page` | 페이지 생성 (마크다운 본문 지원) |
 | `notion_update_page` | 페이지 속성 수정 |
+| `notion_create_database` | 데이터베이스 생성 (스키마/제목 지정) |
 | `notion_get_database` | 데이터베이스 스키마 조회 |
 | `notion_query_database` | 데이터베이스 쿼리 (필터/정렬, 커서 페이지네이션) |
-| `notion_get_page_content` | 페이지 본문 블록 조회 (커서 페이지네이션) |
-| `notion_append_content` | 페이지에 마크다운 콘텐츠 추가 |
+| `notion_get_page_content` | 페이지 본문 블록 조회 (재귀 + 커서 페이지네이션) |
+| `notion_append_content` | 페이지에 마크다운 콘텐츠 추가 (`after_block_id` 로 삽입 위치 지정) |
+| `notion_delete_block` | 블록 삭제 |
+| `notion_update_block` | 블록 텍스트 교체 (타입/속성 보존, 마크다운 인라인 서식 지원) |
 
 ## 프로젝트 구조
 
