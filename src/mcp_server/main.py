@@ -271,6 +271,29 @@ async def jira_delete_comment(issue_key: str, comment_id: str) -> str:
     )
 
 
+@mcp.tool()
+async def jira_delete_issue(issue_key: str, delete_subtasks: bool = False) -> str:
+    """Jira 이슈를 삭제합니다.
+
+    삭제는 되돌릴 수 없으므로 신중하게 사용하세요. 하위 작업이 있는 이슈는
+    delete_subtasks=True 로 호출하지 않으면 400 을 반환합니다.
+
+    Args:
+        issue_key: 이슈 키 (예: "PROJ-123")
+        delete_subtasks: 하위 작업까지 함께 삭제할지 (기본 False)
+    """
+    await jira.delete_issue(issue_key, delete_subtasks=delete_subtasks)
+    return json.dumps(
+        {
+            "deleted": True,
+            "issue_key": issue_key,
+            "delete_subtasks": delete_subtasks,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 # ── Slack Tools ─────────────────────────────────────────────
 
 
