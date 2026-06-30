@@ -62,7 +62,7 @@ async def jira_get_issue(issue_key: str) -> str:
         "priority": (fields.get("priority") or {}).get("name", "None"),
         "created": fields.get("created"),
         "updated": fields.get("updated"),
-        "description": fields.get("description"),
+        "description": jira._adf_to_markdown(fields.get("description")) or None,
     }
     subtasks = fields.get("subtasks", [])
     if subtasks:
@@ -249,6 +249,7 @@ async def jira_get_comments(issue_key: str) -> str:
             "author": (c.get("author") or {}).get("displayName", "Unknown"),
             "created": c.get("created"),
             "updated": c.get("updated"),
+            "body": jira._adf_to_markdown(c.get("body")),
         }
         for c in result.get("comments", [])
     ]
