@@ -258,13 +258,19 @@ def _adf_to_markdown(node: dict | list | None, depth: int = 0) -> str:
 
     if node_type == "listItem":
         parts = []
-        for c in content:
+        for i, c in enumerate(content):
             rendered = _adf_to_markdown(c, depth)
             # 중첩 리스트의 들여쓰기를 깎지 않도록 trailing 공백/개행만 제거
             rendered = rendered.rstrip()
             if c.get("type") in ("paragraph", "heading"):
                 rendered = rendered.lstrip()
             if rendered:
+                # 첫 블록 이후의 non-list 블록은 현재 depth 만큼 들여쓰기 —
+                # 안 하면 후속 codeBlock/paragraph 가 리스트 밖으로 튀어 렌더링 깨짐.
+                # bulletList/orderedList 는 자체적으로 depth+1 들여쓰기가 붙으므로 제외.
+                if i > 0 and c.get("type") not in ("bulletList", "orderedList"):
+                    indent = "  " * depth
+                    rendered = "\n".join(f"{indent}{line}" for line in rendered.split("\n"))
                 parts.append(rendered)
         return "\n".join(parts)
 
@@ -289,8 +295,12 @@ def _adf_to_markdown(node: dict | list | None, depth: int = 0) -> str:
         rows = []
         for row in content:
             cells = row.get("content", []) or []
+            # `|` 는 셀 구분자로 오인되므로 이스케이프. 개행은 셀 안에서 공백으로 접음.
             rendered = [
-                _adf_to_markdown(cell.get("content", []), depth).strip().replace("\n", " ")
+                _adf_to_markdown(cell.get("content", []), depth)
+                .strip()
+                .replace("\n", " ")
+                .replace("|", "\\|")
                 for cell in cells
             ]
             rows.append("| " + " | ".join(rendered) + " |")
