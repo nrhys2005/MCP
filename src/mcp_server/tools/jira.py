@@ -1,5 +1,6 @@
 import base64
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -211,6 +212,168 @@ def _parse_inline(text: str) -> list[dict]:
         nodes.append({"type": "text", "text": text or " "})
 
     return nodes
+
+
+def _adf_to_markdown(node: dict | list | None, depth: int = 0) -> str:
+    """Atlassian Document Format(ADF)을 마크다운 텍스트로 변환합니다.
+
+    Jira 코멘트/설명 body는 ADF JSON 형태로 내려온다. ``None`` 이거나 비어 있으면
+    빈 문자열을 반환한다. 미지원 노드는 자식의 텍스트만 추출해 fallback.
+    ``depth`` 는 중첩 리스트 들여쓰기 계산용.
+    """
+    if node is None:
+        return ""
+    if isinstance(node, list):
+        return "".join(_adf_to_markdown(n, depth) for n in node)
+    if not isinstance(node, dict):
+        return ""
+
+    node_type = node.get("type")
+    content = node.get("content", []) or []
+
+    if node_type == "doc":
+        return "\n\n".join(
+            part for part in (_adf_to_markdown(c, depth).strip() for c in content) if part
+        )
+
+    if node_type == "paragraph":
+        return _adf_to_markdown(content, depth)
+
+    if node_type == "heading":
+        level = (node.get("attrs") or {}).get("level", 1)
+        return "#" * int(level) + " " + _adf_to_markdown(content, depth)
+
+    if node_type == "bulletList":
+        indent = "  " * depth
+        return "\n".join(
+            f"{indent}- {_adf_to_markdown(c, depth + 1).strip()}" for c in content
+        )
+
+    if node_type == "orderedList":
+        indent = "  " * depth
+        return "\n".join(
+            f"{indent}{i + 1}. {_adf_to_markdown(c, depth + 1).strip()}"
+            for i, c in enumerate(content)
+        )
+
+    if node_type == "listItem":
+        parts = []
+        for i, c in enumerate(content):
+            rendered = _adf_to_markdown(c, depth)
+            # 중첩 리스트의 들여쓰기를 깎지 않도록 trailing 공백/개행만 제거
+            rendered = rendered.rstrip()
+            if c.get("type") in ("paragraph", "heading"):
+                rendered = rendered.lstrip()
+            if rendered:
+                # 첫 블록 이후의 non-list 블록은 현재 depth 만큼 들여쓰기 —
+                # 안 하면 후속 codeBlock/paragraph 가 리스트 밖으로 튀어 렌더링 깨짐.
+                # bulletList/orderedList 는 자체적으로 depth+1 들여쓰기가 붙으므로 제외.
+                if i > 0 and c.get("type") not in ("bulletList", "orderedList"):
+                    indent = "  " * depth
+                    rendered = "\n".join(f"{indent}{line}" for line in rendered.split("\n"))
+                parts.append(rendered)
+        return "\n".join(parts)
+
+    if node_type == "blockquote":
+        inner = _adf_to_markdown(content, depth).strip()
+        return "\n".join(f"> {line}" for line in inner.split("\n"))
+
+    if node_type == "codeBlock":
+        language = (node.get("attrs") or {}).get("language", "") or ""
+        code_text = "".join(
+            c.get("text", "") for c in content if c.get("type") == "text"
+        )
+        return f"```{language}\n{code_text}\n```"
+
+    if node_type == "rule":
+        return "---"
+
+    if node_type == "hardBreak":
+        return "\n"
+
+    if node_type == "table":
+        rows = []
+        for row in content:
+            cells = row.get("content", []) or []
+            # `|` 는 셀 구분자로 오인되므로 이스케이프. 개행은 셀 안에서 공백으로 접음.
+            rendered = [
+                _adf_to_markdown(cell.get("content", []), depth)
+                .strip()
+                .replace("\n", " ")
+                .replace("|", "\\|")
+                for cell in cells
+            ]
+            rows.append("| " + " | ".join(rendered) + " |")
+            if len(rows) == 1:
+                rows.append("| " + " | ".join(["---"] * len(rendered)) + " |")
+        return "\n".join(rows)
+
+    if node_type == "panel":
+        panel_type = (node.get("attrs") or {}).get("panelType", "info")
+        inner = _adf_to_markdown(content, depth).strip()
+        return f"> [!{panel_type}]\n" + "\n".join(
+            f"> {line}" for line in inner.split("\n")
+        )
+
+    if node_type == "mention":
+        attrs = node.get("attrs") or {}
+        return "@" + (attrs.get("text") or attrs.get("displayName") or attrs.get("id") or "")
+
+    if node_type == "emoji":
+        attrs = node.get("attrs") or {}
+        return attrs.get("text") or attrs.get("shortName") or ""
+
+    if node_type == "inlineCard":
+        attrs = node.get("attrs") or {}
+        return attrs.get("url", "")
+
+    if node_type == "status":
+        attrs = node.get("attrs") or {}
+        return f"[{attrs.get('text', '')}]"
+
+    if node_type == "date":
+        timestamp = (node.get("attrs") or {}).get("timestamp")
+        if not timestamp:
+            return ""
+        try:
+            return datetime.fromtimestamp(int(timestamp) / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OverflowError):
+            return str(timestamp)
+
+    if node_type in ("media", "mediaSingle", "mediaGroup", "mediaInline"):
+        if node_type in ("mediaSingle", "mediaGroup"):
+            return _adf_to_markdown(content, depth)
+        attrs = node.get("attrs") or {}
+        label = attrs.get("alt") or attrs.get("collection") or attrs.get("id") or "media"
+        return f"[media: {label}]"
+
+    if node_type == "text":
+        text = node.get("text", "")
+        marks = node.get("marks", []) or []
+        if not text.strip():
+            return text
+        stripped = text.strip()
+        leading = text[: len(text) - len(text.lstrip())]
+        trailing = text[len(text.rstrip()) :]
+        for mark in marks:
+            mark_type = mark.get("type")
+            if mark_type == "strong":
+                stripped = f"**{stripped}**"
+            elif mark_type == "em":
+                stripped = f"*{stripped}*"
+            elif mark_type == "code":
+                stripped = f"`{stripped}`"
+            elif mark_type == "strike":
+                stripped = f"~~{stripped}~~"
+            elif mark_type == "link":
+                href = (mark.get("attrs") or {}).get("href", "")
+                stripped = f"[{stripped}]({href})"
+        return f"{leading}{stripped}{trailing}"
+
+    # 미지원 노드: 자식 텍스트만 fallback 추출
+    if content:
+        return _adf_to_markdown(content, depth)
+    return ""
 
 
 async def search_issues(jql: str, max_results: int = 10) -> dict:
