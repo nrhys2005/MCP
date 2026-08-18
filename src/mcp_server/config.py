@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     mcp_host: str = "0.0.0.0"
     mcp_port: int = 8000
 
-    model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": str(_ENV_FILE),
+        "env_file_encoding": "utf-8",
+        # .env에는 이 서버가 쓰지 않는 변수(SLACK_APP_TOKEN 등)도 들어있다.
+        # 기본값(extra_forbidden)이면 그런 변수 하나에 서버 전체가 기동 실패하므로 무시한다.
+        "extra": "ignore",
+    }
 
 
 settings = Settings()
