@@ -1,6 +1,8 @@
 import asyncio
+import mimetypes
 import re
 import uuid
+from pathlib import Path
 
 import httpx
 
@@ -9,6 +11,10 @@ from mcp_server.config import settings
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 _MAX_RICH_TEXT_LENGTH = 2000
+
+# 파일 첨부 시 접근 허용 디렉토리 (경로 순회 방지). jira.attach_file 과 동일 정책.
+_ALLOWED_ATTACH_DIRS = ("/tmp", "/var/tmp")
+_UPLOAD_TIMEOUT = 120.0
 
 _client: httpx.AsyncClient | None = None
 
@@ -216,6 +222,66 @@ async def append_block_children(block_id: str, children: list, after: str | None
     resp = await _get_client().patch(f"/blocks/{block_id}/children", json=body)
     resp.raise_for_status()
     return resp.json()
+
+
+async def upload_file(file_path: str, content_type: str | None = None) -> dict:
+    """로컬 파일을 Notion File Upload API로 업로드하고 완료된 file_upload 객체를 반환합니다.
+
+    Notion 파일 업로드는 2단계입니다:
+      1. POST /file_uploads       → upload id 와 upload_url 발급 (JSON)
+      2. POST {upload_url} (send) → 실제 바이트를 multipart 로 전송
+
+    경로 순회 방지를 위해 _ALLOWED_ATTACH_DIRS 하위 파일만 허용합니다.
+    """
+    path = Path(file_path).resolve()
+    if not any(str(path).startswith(d) for d in _ALLOWED_ATTACH_DIRS):
+        raise PermissionError(
+            f"허용되지 않은 경로입니다: {path}. 허용 디렉토리: {_ALLOWED_ATTACH_DIRS}"
+        )
+    if not path.is_file():
+        raise FileNotFoundError(f"파일을 찾을 수 없습니다: {file_path}")
+
+    content_type = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+    # 1) 업로드 세션 생성
+    create_resp = await _get_client().post(
+        "/file_uploads",
+        json={"filename": path.name, "content_type": content_type},
+    )
+    create_resp.raise_for_status()
+    upload = create_resp.json()
+    upload_url = upload["upload_url"]
+
+    # 2) 실제 바이트 전송 (multipart — JSON Content-Type 을 붙이면 안 됨)
+    async with httpx.AsyncClient(timeout=_UPLOAD_TIMEOUT) as send_client:
+        with open(path, "rb") as f:
+            send_resp = await send_client.post(
+                upload_url,
+                headers={
+                    "Authorization": f"Bearer {settings.notion_api_key}",
+                    "Notion-Version": NOTION_VERSION,
+                },
+                files={"file": (path.name, f, content_type)},
+            )
+    send_resp.raise_for_status()
+    return send_resp.json()
+
+
+async def attach_file(page_id: str, file_path: str, content_type: str | None = None) -> dict:
+    """파일을 업로드해 Notion 페이지 끝에 file 블록으로 첨부합니다.
+
+    반환: {"upload_id": ..., "blocks": [추가된 file 블록들]}
+    """
+    uploaded = await upload_file(file_path, content_type)
+    upload_id = uploaded["id"]
+    page_id = _normalize_id(page_id)
+    block = {
+        "object": "block",
+        "type": "file",
+        "file": {"type": "file_upload", "file_upload": {"id": upload_id}},
+    }
+    result = await append_block_children(page_id, [block])
+    return {"upload_id": upload_id, "blocks": result.get("results", [])}
 
 
 def _parse_inline(text: str) -> list[dict]:
