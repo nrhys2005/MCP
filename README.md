@@ -105,7 +105,7 @@ uv run python -m mcp_server.main
 | `linear_list_teams` | 팀 목록 및 워크플로 상태 조회 |
 | `linear_list_projects` | 프로젝트 목록 조회 |
 
-### Notion (11개)
+### Notion (12개)
 
 | 도구 | 설명 |
 |------|------|
@@ -120,6 +120,7 @@ uv run python -m mcp_server.main
 | `notion_append_content` | 페이지에 마크다운 콘텐츠 추가 (`after_block_id` 로 삽입 위치 지정) |
 | `notion_delete_block` | 블록 삭제 |
 | `notion_update_block` | 블록 텍스트 교체 (타입/속성 보존, 마크다운 인라인 서식 지원) |
+| `notion_attach_file` | 페이지에 파일 업로드·첨부 (File Upload API, `/tmp`·`/var/tmp` 화이트리스트) |
 
 ## 프로젝트 구조
 

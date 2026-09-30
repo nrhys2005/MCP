@@ -905,6 +905,30 @@ async def notion_append_content(page_id: str, content: str, after_block_id: str 
     )
 
 
+@mcp.tool()
+async def notion_attach_file(page_id: str, file_path: str) -> str:
+    """Notion 페이지에 파일(PDF 등)을 업로드해 첨부합니다.
+
+    Notion File Upload API 로 파일을 올린 뒤 페이지 끝에 file 블록으로 추가합니다.
+    경로 순회 방지를 위해 /tmp 또는 /var/tmp 하위의 파일만 첨부할 수 있습니다.
+
+    Args:
+        page_id: 첨부할 페이지 ID
+        file_path: 첨부할 파일의 절대 경로 (/tmp 또는 /var/tmp 하위)
+    """
+    result = await notion.attach_file(page_id, file_path)
+    blocks = result["blocks"]
+    return json.dumps(
+        {
+            "upload_id": result["upload_id"],
+            "added_blocks": len(blocks),
+            "block_ids": [b["id"] for b in blocks],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 # ── FastAPI integration ─────────────────────────────────────
 
 app = FastAPI(title="MCP Server")
